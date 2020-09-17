@@ -48,13 +48,10 @@ use pallet_timestamp;
 
 use sp_std::{result, prelude::*};
 use codec::{Encode, Decode};
-use frame_support::{
-	decl_storage, decl_module, Parameter, traits::{Get, FindAuthor},
-	ConsensusEngineId,
-};
+use frame_support::{traits::{Get, FindAuthor}, ConsensusEngineId};
 use sp_runtime::{
 	RuntimeAppPublic,
-	traits::{SaturatedConversion, Saturating, Zero, Member, IsMember}, generic::DigestItem,
+	traits::{SaturatedConversion, Saturating, Zero, IsMember}, generic::DigestItem,
 };
 use sp_timestamp::OnTimestampSet;
 use sp_inherents::{InherentIdentifier, InherentData, ProvideInherent, MakeFatalError};
@@ -66,27 +63,61 @@ use sp_consensus_aura::{
 mod mock;
 mod tests;
 
-pub trait Trait: pallet_timestamp::Trait {
-	/// The identifier type for an authority.
-	type AuthorityId: Member + Parameter + RuntimeAppPublic + Default;
-}
+pub use pallet::*;
 
-decl_storage! {
-	trait Store for Module<T: Trait> as Aura {
-		/// The last timestamp.
-		LastTimestamp get(fn last) build(|_| 0.into()): T::Moment;
+#[frame_support::pallet(Aura)]
+mod pallet {
+	use super::*;
+	pub use frame_support::pallet_prelude::*;
+	pub use frame_system::pallet_prelude::*;
 
-		/// The current authorities
-		pub Authorities get(fn authorities): Vec<T::AuthorityId>;
+	#[pallet::trait_]
+	pub trait Trait: pallet_timestamp::Trait + frame_system::Trait {
+		/// The identifier type for an authority.
+		type AuthorityId: Member + Parameter + RuntimeAppPublic + Default
+			+ MaybeSerializeDeserialize;
 	}
-	add_extra_genesis {
-		config(authorities): Vec<T::AuthorityId>;
-		build(|config| Module::<T>::initialize_authorities(&config.authorities))
-	}
-}
 
-decl_module! {
-	pub struct Module<T: Trait> for enum Call where origin: T::Origin { }
+	/// The last timestamp.
+	#[pallet::storage]
+	#[pallet::generate_getter(fn last)]
+	pub(crate) type LastTimestamp<T: Trait> = StorageValueType<_, T::Moment, ValueQuery>;
+
+	/// The current authorities
+	#[pallet::storage]
+	#[pallet::generate_getter(fn authorities)]
+	pub type Authorities<T: Trait> = StorageValueType<_, Vec<T::AuthorityId>, ValueQuery>;
+
+
+	#[pallet::genesis_config]
+	pub struct GenesisConfig<T: Trait> {
+		pub authorities: Vec<T::AuthorityId>,
+	}
+
+	#[cfg(feature = "std")]
+	impl<T: Trait> Default for GenesisConfig<T> {
+		fn default() -> Self {
+			Self { authorities: Default::default() }
+		}
+	}
+
+	#[pallet::genesis_build]
+	impl<T: Trait> GenesisBuild<T> for GenesisConfig<T> {
+		fn build(&self) {
+			<LastTimestamp<T>>::put::<T::Moment>(0.into());
+			Module::<T>::initialize_authorities(&self.authorities);
+		}
+	}
+
+	#[pallet::module]
+	#[pallet::generate_store(pub(crate) trait Store)]
+	pub struct Module<T>(PhantomData<T>);
+
+	#[pallet::module_interface]
+	impl<T: Trait> ModuleInterface<BlockNumberFor<T>> for Module<T> {}
+
+	#[pallet::call]
+	impl<T: Trait> Module<T> {}
 }
 
 impl<T: Trait> Module<T> {
@@ -162,7 +193,7 @@ impl<T: Trait> FindAuthor<u32> for Module<T> {
 	}
 }
 
-/// We can not implement `FindAuthor` twice, because the compiler does not know if 
+/// We can not implement `FindAuthor` twice, because the compiler does not know if
 /// `u32 == T::AuthorityId` and thus, prevents us to implement the trait twice.
 #[doc(hidden)]
 pub struct FindAccountFromAuthorIndex<T, Inner>(sp_std::marker::PhantomData<(T, Inner)>);
